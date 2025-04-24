@@ -14,8 +14,8 @@ pub const TokenType = enum {
     End,
     Fn,
     Pipe,
-    ChannelOut,
-    ChannelIn,
+    Comma,
+    And,
     Identifier,
     Eof,
 };
@@ -49,7 +49,14 @@ pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) TokenError!Toke
         input_view = input_view[skip..];
 
         if (try_tokenize_keyword(input_view, &token)) {
-            try tokens.append(token);
+            tokens.append(token) catch return TokenError.OutOfMemory;
+            input_view = input_view[token.lexme.len..];
+            continue;
+        }
+
+        if (try_tokenize_number(input_view, &token)) {
+            tokens.append(token) catch return TokenError.OutOfMemory;
+
             input_view = input_view[token.lexme.len..];
             continue;
         }
@@ -63,17 +70,18 @@ pub fn tokenize(input: []const u8, allocator: std.mem.Allocator) TokenError!Toke
                 token.lexme = token.lexme[1 .. token.lexme.len - 1];
             }
 
-            try tokens.append(token);
+            tokens.append(token) catch return TokenError.OutOfMemory;
             input_view = input_view[token.lexme.len + offset ..];
             continue;
         }
 
-        if (try_tokenize_identifier(input_view, &token)) {
-            try tokens.append(token);
+        if (try_tokenize_operator(input_view, &token)) {
+            tokens.append(token) catch return TokenError.OutOfMemory;
             input_view = input_view[token.lexme.len..];
             continue;
         }
 
+        std.debug.print("Unexpected token in line: [{s}]\n", .{input_view});
         return TokenError.UndefinedToken;
     }
 
@@ -89,7 +97,7 @@ inline fn is_digit(char: u8) bool {
 }
 
 inline fn is_letter(char: u8) bool {
-    return ('A' <= char and char <= 'Z') or ('a' <= char and char <= 'z');
+    return ('A' <= char and char <= 'Z') or ('a' <= char and char <= 'z') or (char == '-' or char == '_' or char == '$');
 }
 
 inline fn is_operator(char: u8) bool {
@@ -107,13 +115,16 @@ fn skip_whitespace(input: []const u8) usize {
 fn try_tokenize_path(input: []const u8, token: *Token) bool {
     if (input.len == 0) return false;
     var index: usize = 0;
+    var found_path_specifier = false;
 
     if (input[index] == '.' or input[index] == '~') {
         index += 1 + @as(usize, @intFromBool(input[index + 1] == '.'));
+        found_path_specifier = true;
     }
 
     if (input[index] == '/') {
         index += 1;
+        found_path_specifier = true;
     }
 
     var new_view = input[index..];
@@ -128,8 +139,9 @@ fn try_tokenize_path(input: []const u8, token: *Token) bool {
             break;
         }
 
-        if (new_view[border] == '/') {
+        if (new_view[border] == '/' or new_view[border] == '.') {
             new_view = new_view[(border + 1)..];
+            found_path_specifier = true;
             index += 1;
             continue;
         }
@@ -139,7 +151,10 @@ fn try_tokenize_path(input: []const u8, token: *Token) bool {
     const lexme_len = index;
 
     if (lexme_len > 0) {
-        token.type = TokenType.String;
+        token.type = switch (found_path_specifier) {
+            true => TokenType.String,
+            false => TokenType.Identifier,
+        };
         token.lexme = input[0..lexme_len];
         return true;
     }
@@ -152,6 +167,47 @@ fn skip_to_word_border(input: []const u8) usize {
         offset += 1;
     }
     return offset;
+}
+fn skip_to_whitespace(input: []const u8) usize {
+    var offset: usize = 0;
+    while (offset < input.len and !is_whitespace(input[offset])) {
+        offset += 1;
+    }
+    return offset;
+}
+
+fn try_tokenize_number(input: []const u8, token: *Token) bool {
+    if (input.len == 0) return false;
+
+    var index: usize = 0;
+
+    if (input[0] == '-') {
+        index += 1;
+    }
+
+    if (!is_digit(input[index])) {
+        return false;
+    }
+    var has_decimal = false;
+
+    while (index < input.len) : (index += 1) {
+        if (!is_digit(input[index])) {
+            if (!has_decimal and input[index] == '.') {
+                has_decimal = true;
+                continue;
+            }
+            break;
+        }
+    }
+
+    if (index == 0 or (index == 1 and input[0] == '-')) {
+        return false;
+    }
+
+    token.type = TokenType.Number;
+    token.lexme = input[0..index];
+
+    return true;
 }
 
 fn try_tokenize_string(input: []const u8, token: *Token) TokenError!bool {
@@ -215,6 +271,32 @@ fn try_tokenize_keyword(input: []const u8, token: *Token) bool {
             token.lexme = lexme;
             return true;
         }
+    }
+
+    return false;
+}
+
+fn try_tokenize_operator(input: []const u8, token: *Token) bool {
+    const space = skip_to_whitespace(input);
+
+    if (input.len == 0 or space == 0) return false;
+
+    if (input[0] == '|') {
+        token.type = TokenType.Pipe;
+        token.lexme = input[0..1];
+        return true;
+    }
+
+    if (input[0] == '&') {
+        token.type = TokenType.And;
+        token.lexme = input[0..1];
+        return true;
+    }
+
+    if (input[0] == ',') {
+        token.type = TokenType.Comma;
+        token.lexme = input[0..1];
+        return true;
     }
 
     return false;

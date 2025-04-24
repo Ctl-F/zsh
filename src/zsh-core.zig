@@ -20,15 +20,7 @@ test "tokenizer_returns_keywords" {
         "true", "false", "if", "elif", "else", "begin", "end", "for", "fn",
     };
 
-    const allocator = std.testing.allocator;
-
-    const tokens = try tokenizer.tokenize(input, allocator);
-    defer tokens.deinit();
-
-    for (tokens.items, 0..) |token, index| {
-        try std.testing.expectEqual(expected_type[index], token.type);
-        try std.testing.expectEqualStrings(expected_lexme[index], token.lexme);
-    }
+    try perform_analysis(input, &expected_type, &expected_lexme);
 }
 
 test "tokenizer_returns_generic_identifier" {
@@ -40,15 +32,7 @@ test "tokenizer_returns_generic_identifier" {
         "foo", "bar",
     };
 
-    const allocator = std.testing.allocator;
-
-    const tokens = try tokenizer.tokenize(input, allocator);
-    defer tokens.deinit();
-
-    for (tokens.items, 0..) |token, index| {
-        try std.testing.expectEqual(expected_type[index], token.type);
-        try std.testing.expectEqualStrings(expected_lexme[index], token.lexme);
-    }
+    try perform_analysis(input, &expected_type, &expected_lexme);
 }
 
 test "tokenizer_returns_nullinput" {
@@ -62,7 +46,6 @@ test "tokenizer_returns_nullinput" {
 
 test "tokenizer_returns_string" {
     const input = "\"Hello World\""; // \"Hello \\n\\\"World\"";
-    const allocator = std.testing.allocator;
 
     const expected_type = [_]tokenizer.TokenType{
         .String, // .String,
@@ -71,18 +54,11 @@ test "tokenizer_returns_string" {
         "Hello World", // "Hello \\n\\\"World",
     };
 
-    const tokens = try tokenizer.tokenize(input, allocator);
-    defer tokens.deinit();
-
-    for (tokens.items, 0..) |token, index| {
-        try std.testing.expectEqual(expected_type[index], token.type);
-        try std.testing.expectEqualStrings(expected_lexme[index], token.lexme);
-    }
+    try perform_analysis(input, &expected_type, &expected_lexme);
 }
 
 test "tokenizer_returns_path" {
     const input = "./foo/bar ~/bar/foo/ /hello/world /hello/world/ ../test ../test/ hello/world hello/ /hello/world/";
-    const allocator = std.testing.allocator;
 
     const expected_type = [_]tokenizer.TokenType{
         .String, .String, .String,
@@ -101,11 +77,65 @@ test "tokenizer_returns_path" {
         "/hello/world/",
     };
 
-    const tokens = try tokenizer.tokenize(input, allocator);
-    defer tokens.deinit();
+    try perform_analysis(input, &expected_type, &expected_lexme);
+}
 
-    for (tokens.items, 0..) |token, index| {
-        try std.testing.expectEqual(expected_type[index], token.type);
-        try std.testing.expectEqualStrings(expected_lexme[index], token.lexme);
+test "tokenizer_returns_numbers" {
+    const input = "1 100.5 -100.0 3.1415 -0.0 0.0 1005";
+
+    const expected_type = [_]tokenizer.TokenType{
+        .Number, .Number, .Number,
+        .Number, .Number, .Number,
+        .Number,
+    };
+    const expected_lexme = [_][]const u8{
+        "1",
+        "100.5",
+        "-100.0",
+        "3.1415",
+        "-0.0",
+        "0.0",
+        "1005",
+    };
+
+    try perform_analysis(input, &expected_type, &expected_lexme);
+}
+
+test "tokenizer_returns_operators" {
+    const input = "| & ,";
+
+    const expected_type = [_]tokenizer.TokenType{
+        .Pipe, .And, .Comma,
+    };
+    const expected_lexme = [_][]const u8{
+        "|", "&", ",",
+    };
+
+    try perform_analysis(input, &expected_type, &expected_lexme);
+}
+
+test "tokenizer_handles_expression" {
+    const input = "fin ./information.txt | grep $path | echo";
+    const expected_type = [_]tokenizer.TokenType{
+        .Identifier, .String, .Pipe, .Identifier, .Identifier, .Pipe, .Identifier,
+    };
+    const expected_lexme = [_][]const u8{ "fin", "./information.txt", "|", "grep", "$path", "|", "echo" };
+
+    try perform_analysis(input, &expected_type, &expected_lexme);
+}
+
+fn perform_analysis(input: []const u8, expected_types: []const tokenizer.TokenType, expected_lexme: []const []const u8) !void {
+    if (@import("builtin").is_test) {
+        const allocator = std.testing.allocator;
+
+        const tokens = try tokenizer.tokenize(input, allocator);
+        defer tokens.deinit();
+
+        for (tokens.items, 0..) |token, index| {
+            try std.testing.expectEqual(expected_types[index], token.type);
+            try std.testing.expectEqualStrings(expected_lexme[index], token.lexme);
+        }
+    } else {
+        unreachable;
     }
 }
